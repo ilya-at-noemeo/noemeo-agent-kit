@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "noemeo-agent-kit"
+version = "0.1.1"
+license = "Apache-2.0"
+description = "Shared Lambda/agent driver toolkit for Noemeo products -- config, token usage, prompt-hash, structured logging. No domain logic."
+package-mode = true
+packages = [{ include = "noemeo_agent_kit", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pydantic = "^2.7"
+langchain-openai = ">=1.6.2,<2.0"
+httpx = "^0.27"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+ruff = "^0.14.3"
+
+[tool.ruff]
+# 100 rather than ruff's 88: closest to the existing code, so adopting
+# ruff reformatted the fewest lines. Its presence also opts this repo in
+# to the noemeo plugin's ruff-on-edit hook.
+line-length = 100
+target-version = "py312"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
