@@ -26,6 +26,12 @@ write twice:
   `with_structured_output` used tool calling; langchain-openai 1.x's
   `json_schema` default accepts any effort -- see the function
   docstring.) The local-development path (OpenAI directly from localhost).
+- `llm_anthropic.py` -- `build_structured_llm` with the same return
+  contract, for Claude via `ChatAnthropic` (`ANTHROPIC_API_KEY`). Takes
+  Anthropic's own `effort` and `thinking` rather than OpenAI's
+  `reasoning_effort`, and uses `method="json_schema"` because current
+  Claude models reject forced tool calls. Needs the `anthropic` extra:
+  `noemeo-agent-kit[anthropic]`.
 - `llm_cloud.py` -- `build_structured_llm` with the same return
   contract, calling a deployed endpoint that implements the cloud chat
   contract below (activation key, server-side model choice). The

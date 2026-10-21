@@ -23,11 +23,14 @@ plain parameter — never read from `os.environ` inside agent code.
 
 ## The LLM client seam
 
-There are two paths to an LLM, as sibling modules behind the same
+There are three paths to an LLM, as sibling modules behind the same
 return contract: `llm_cloud.py`'s `build_structured_llm()` (HTTP to an
 endpoint implementing the README's "Cloud chat contract v1"; the
-server picks provider and model) and `llm_openai.py`'s (`ChatOpenAI`
-with an `OPENAI_API_KEY`). Which one a product uses, and when, is the
+server picks provider and model), `llm_openai.py`'s (`ChatOpenAI`
+with an `OPENAI_API_KEY`) and `llm_anthropic.py`'s (`ChatAnthropic`
+with an `ANTHROPIC_API_KEY`, behind the optional `anthropic` extra --
+it takes Anthropic's `effort`/`thinking`, not OpenAI's
+`reasoning_effort`; translating between them is the driver's job). Which one a product uses, and when, is the
 product driver's choice, not this library's. The contract is defined
 here and implemented by product infra; change it here first, versioned,
 and keep it product-neutral.
