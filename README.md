@@ -60,8 +60,8 @@ supplies (e.g. `https://<host>/v1/chat`); the request carries no
 version field. A breaking change means a new path (`/v2/chat`) served
 alongside `/v1` until clients move, never a changed `/v1`.
 
-Request: `POST <endpoint>` with `Authorization: Bearer <activation key>`
-and a JSON body:
+Request: `POST <endpoint>` with `Authorization: Bearer <activation key>`,
+optionally `X-Session-Id: <UUID>`, and a JSON body:
 
 ```json
 {
@@ -111,6 +111,16 @@ Rules both sides rely on:
 - **Clients ignore unknown response fields**, so a server can add
   diagnostics (e.g. latency) without a version bump. Adding a request
   field or changing a field's meaning is breaking.
+- **`X-Session-Id` is optional and opaque.** A client sends it to group
+  the calls of one of its own sessions (a conversation), so the server
+  can log it, e.g. to sum cost per session; `build_structured_llm`'s
+  `session_id` sets it. It's a random UUID the client chose, never
+  derived from content. A server ignores it when absent, ignores a
+  value that isn't a UUID, and never uses it for authorization or
+  quota. "Adding a request field is breaking" (below) is about body
+  fields; an optional header isn't, because both sides ignore headers
+  they don't know (a server that refused unknown headers wouldn't
+  conform), so it needs no new version.
 - **`use_case` is opaque here:** product rules (guardrail, limits,
   model) belong in the server's handling of it, not in new contract
   fields.
