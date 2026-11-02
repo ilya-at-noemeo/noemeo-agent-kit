@@ -16,7 +16,8 @@ structured_output.invoke_structured needs no changes to accept either.
 `session_id` (optional) is sent as the `X-Session-Id` header when set: a
 UUID the caller picks to group the calls of one session of its own, so
 the server can log it (e.g. to sum cost per session). It's opaque to
-the server and must never be derived from content.
+the server, which scopes it to the authenticated caller, and must never
+be derived from content.
 
 `model` is forwarded only when set; leave it unset so the server's own
 default wins -- translating between model naming schemes (e.g. an
