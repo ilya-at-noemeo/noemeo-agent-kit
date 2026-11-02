@@ -117,10 +117,14 @@ Rules both sides rely on:
   `session_id` sets it. It's a random UUID the client chose, never
   derived from content. A server ignores it when absent, ignores a
   value that isn't a UUID, and never uses it for authorization or
-  quota. "Adding a request field is breaking" (below) is about body
-  fields; an optional header isn't, because both sides ignore headers
-  they don't know (a server that refused unknown headers wouldn't
-  conform), so it needs no new version.
+  quota. It's scoped to the authenticated caller: a server keys a
+  session by the account it resolved from the credentials together
+  with this ID, so the same value from two accounts is two sessions.
+  The client never sends its own user ID. "Adding a request field is
+  breaking" (below) is about body fields; an optional header isn't,
+  because both sides ignore headers they don't know (a server that
+  refused unknown headers wouldn't conform), so it needs no new
+  version.
 - **`use_case` is opaque here:** product rules (guardrail, limits,
   model) belong in the server's handling of it, not in new contract
   fields.
