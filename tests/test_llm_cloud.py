@@ -82,6 +82,47 @@ def test_model_is_included_only_when_explicitly_passed(mock_post):
     assert kwargs["json"]["model"] == "gpt-5.6"
 
 
+def _ok_body():
+    return {
+        "blocked": False,
+        "result": {"choices": [{"message": {"content": '{"verdict": "keep"}'}}], "usage": None},
+    }
+
+
+@patch("noemeo_agent_kit.llm_cloud.httpx.post")
+def test_session_id_is_sent_as_the_x_session_id_header(mock_post):
+    mock_post.return_value = _mock_response(_ok_body())
+    llm = build_structured_llm(
+        _Schema,
+        use_case="example_a",
+        activation_key="key123",
+        endpoint="https://example.com/v1/chat",
+        session_id="0b9e8f2c-3d41-4a7e-9c55-6f1d2a8b7e03",
+    )
+    invoke_structured(llm, [])
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["headers"] == {
+        "Authorization": "Bearer key123",
+        "X-Session-Id": "0b9e8f2c-3d41-4a7e-9c55-6f1d2a8b7e03",
+    }
+
+
+@patch("noemeo_agent_kit.llm_cloud.httpx.post")
+def test_no_x_session_id_header_is_sent_without_a_session_id(mock_post):
+    mock_post.return_value = _mock_response(_ok_body())
+    llm = build_structured_llm(
+        _Schema,
+        use_case="example_a",
+        activation_key="key123",
+        endpoint="https://example.com/v1/chat",
+    )
+    invoke_structured(llm, [])
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["headers"] == {"Authorization": "Bearer key123"}
+
+
 @patch("noemeo_agent_kit.llm_cloud.httpx.post")
 def test_guardrail_blocked_response_raises_through_invoke_structured(mock_post):
     mock_post.return_value = _mock_response({"blocked": True, "reason": "guardrail_intervened"})
