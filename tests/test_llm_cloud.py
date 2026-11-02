@@ -124,6 +124,62 @@ def test_no_x_session_id_header_is_sent_without_a_session_id(mock_post):
 
 
 @patch("noemeo_agent_kit.llm_cloud.httpx.post")
+def test_client_version_is_sent_as_the_x_client_version_header(mock_post):
+    mock_post.return_value = _mock_response(_ok_body())
+    llm = build_structured_llm(
+        _Schema,
+        use_case="example_a",
+        activation_key="key123",
+        endpoint="https://example.com/v1/chat",
+        client_version="example-app/1.4.2",
+    )
+    invoke_structured(llm, [])
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["headers"] == {
+        "Authorization": "Bearer key123",
+        "X-Client-Version": "example-app/1.4.2",
+    }
+
+
+@patch("noemeo_agent_kit.llm_cloud.httpx.post")
+def test_client_version_and_session_id_headers_are_sent_together(mock_post):
+    mock_post.return_value = _mock_response(_ok_body())
+    llm = build_structured_llm(
+        _Schema,
+        use_case="example_a",
+        activation_key="key123",
+        endpoint="https://example.com/v1/chat",
+        session_id="0b9e8f2c-3d41-4a7e-9c55-6f1d2a8b7e03",
+        client_version="example-app/1.4.2",
+    )
+    invoke_structured(llm, [])
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["headers"] == {
+        "Authorization": "Bearer key123",
+        "X-Session-Id": "0b9e8f2c-3d41-4a7e-9c55-6f1d2a8b7e03",
+        "X-Client-Version": "example-app/1.4.2",
+    }
+
+
+@patch("noemeo_agent_kit.llm_cloud.httpx.post")
+def test_no_x_client_version_header_is_sent_without_a_client_version(mock_post):
+    mock_post.return_value = _mock_response(_ok_body())
+    llm = build_structured_llm(
+        _Schema,
+        use_case="example_a",
+        activation_key="key123",
+        endpoint="https://example.com/v1/chat",
+        session_id="0b9e8f2c-3d41-4a7e-9c55-6f1d2a8b7e03",
+    )
+    invoke_structured(llm, [])
+
+    _, kwargs = mock_post.call_args
+    assert "X-Client-Version" not in kwargs["headers"]
+
+
+@patch("noemeo_agent_kit.llm_cloud.httpx.post")
 def test_guardrail_blocked_response_raises_through_invoke_structured(mock_post):
     mock_post.return_value = _mock_response({"blocked": True, "reason": "guardrail_intervened"})
 
@@ -233,3 +289,20 @@ def test_error_without_an_envelope_still_raises_cloud_chat_error(mock_post, body
         _llm().invoke([])
     assert excinfo.value.status_code == 403
     assert excinfo.value.error_code is None
+
+
+@patch("noemeo_agent_kit.llm_cloud.httpx.post")
+def test_client_outdated_response_raises_cloud_chat_error(mock_post):
+    mock_post.return_value = _mock_response(
+        {
+            "error": "client_outdated",
+            "message": "Please update to continue.",
+            "request_id": "r-426",
+        },
+        status_code=426,
+    )
+    with pytest.raises(CloudChatError) as excinfo:
+        _llm().invoke([])
+    error = excinfo.value
+    assert (error.status_code, error.error_code) == (426, "client_outdated")
+    assert (error.server_message, error.request_id) == ("Please update to continue.", "r-426")
