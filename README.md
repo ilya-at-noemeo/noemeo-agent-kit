@@ -61,7 +61,8 @@ version field. A breaking change means a new path (`/v2/chat`) served
 alongside `/v1` until clients move, never a changed `/v1`.
 
 Request: `POST <endpoint>` with `Authorization: Bearer <activation key>`,
-optionally `X-Session-Id: <UUID>`, and a JSON body:
+optionally `X-Session-Id: <UUID>` and `X-Client-Version:
+<client>/<major>.<minor>.<patch>`, and a JSON body:
 
 ```json
 {
@@ -100,6 +101,16 @@ where `error` is a product-defined code a client branches on (e.g.
 subclass) carrying `error_code`, `server_message` and `request_id`,
 each None when the body doesn't follow this shape.
 
+One code is reserved here rather than product-defined:
+`client_outdated`, with status `426`, means "this client is older than
+the server still supports". Its `message` tells the user what to do
+(e.g. where to get a current release), so it comes from the server, not
+from a string frozen into the client. A server returns it only for that
+reason, never because of request content, and `426` carries no other
+code. `426` is used without the
+`Upgrade` header HTTP defines for it: this isn't a protocol upgrade,
+and clients branch on `error`, not on the status alone.
+
 Rules both sides rely on:
 
 - **`schema` must fit OpenAI structured outputs' strict mode** (servers
@@ -125,6 +136,22 @@ Rules both sides rely on:
   because both sides ignore headers they don't know (a server that
   refused unknown headers wouldn't conform), so it needs no new
   version.
+- **`X-Client-Version` is optional.** `<client>` is a short lowercase
+  name for the calling application (`[a-z0-9-]`, at most 32
+  characters) and the rest its release as three decimal integers, with
+  no suffix such as `-rc1`; `build_structured_llm`'s
+  `client_version` sets it. A server may serve only a window of client
+  releases and refuse others with `client_outdated`; how it treats a
+  missing or unrecognised value is its own policy. A server that logs
+  the value keeps it only when it has that exact shape, never the raw
+  header text. Like `X-Session-Id`, it's an optional header, so adding
+  it needs no new version. It identifies a release, not a user, and
+  isn't proof of anything: a client can send any value.
+- **Clients show messages for codes they don't know.** A client
+  released before the server added an error code still receives it;
+  showing the error's `message` lets a server explain a new kind of
+  refusal to clients already installed. This library only carries it
+  (`CloudChatError.server_message`); the calling application shows it.
 - **`use_case` is opaque here:** product rules (guardrail, limits,
   model) belong in the server's handling of it, not in new contract
   fields.
@@ -145,12 +172,14 @@ Poetry git dependency, no private package index needed:
 
 ```toml
 [tool.poetry.dependencies]
-noemeo-agent-kit = { git = "https://github.com/ilya-at-noemeo/noemeo-agent-kit.git", branch = "main" }
+noemeo-agent-kit = { git = "https://github.com/ilya-at-noemeo/noemeo-agent-kit.git", tag = "v0.2.0" }
 ```
 
-Pin to a tag instead of `branch = "main"` once more than one product
-depends on this and you want to protect one from the other's in-flight
-changes.
+Pin to a release tag (`tag = "v0.2.0"`) rather than `branch = "main"`,
+so a product's lock names a version and moves only when the product
+chooses. `version` in `pyproject.toml` is bumped with every change to
+the public API or the contract text: minor for additions, major for
+breaking changes; each release is tagged `v<version>` on `main`.
 
 ## Development
 

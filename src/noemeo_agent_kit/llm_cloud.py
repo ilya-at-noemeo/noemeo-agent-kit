@@ -19,6 +19,12 @@ the server can log it (e.g. to sum cost per session). It's opaque to
 the server, which scopes it to the authenticated caller, and must never
 be derived from content.
 
+`client_version` (optional) is sent as the `X-Client-Version` header
+when set: `<client>/<major>.<minor>.<patch>`, the calling application
+and its release, which the driver knows and this module doesn't. A
+server uses it to decide whether it still supports that client and
+may refuse one it doesn't with the `client_outdated` error.
+
 `model` is forwarded only when set; leave it unset so the server's own
 default wins -- translating between model naming schemes (e.g. an
 OpenAI-native name vs. a provider-specific one) is the server's job,
@@ -78,6 +84,7 @@ def build_structured_llm(
     reasoning_effort: str | None = None,
     timeout: float = DEFAULT_LLM_TIMEOUT_SECONDS,
     session_id: str | None = None,
+    client_version: str | None = None,
 ):
     """Construct a runnable bound to `output_schema`, invoked the same
     way llm_openai.build_structured_llm's return value is
@@ -88,8 +95,9 @@ def build_structured_llm(
     doesn't interpret it. `activation_key`/`endpoint` identify the
     caller's account and the deployed chat endpoint respectively; both
     required, since there's no local fallback for either once this
-    transport is selected. `session_id` is sent as `X-Session-Id` when
-    set (README, "Cloud chat contract v1").
+    transport is selected. `session_id` is sent as `X-Session-Id` and
+    `client_version` as `X-Client-Version` when set (README, "Cloud chat
+    contract v1").
     """
     return _CloudStructuredLLM(
         output_schema,
@@ -99,12 +107,22 @@ def build_structured_llm(
         model=model,
         timeout=timeout,
         session_id=session_id,
+        client_version=client_version,
     )
 
 
 class _CloudStructuredLLM:
     def __init__(
-        self, output_schema, *, use_case, activation_key, endpoint, model, timeout, session_id
+        self,
+        output_schema,
+        *,
+        use_case,
+        activation_key,
+        endpoint,
+        model,
+        timeout,
+        session_id,
+        client_version,
     ):
         self._output_schema = output_schema
         self._schema = output_schema.model_json_schema()
@@ -114,6 +132,7 @@ class _CloudStructuredLLM:
         self._model = model
         self._timeout = timeout
         self._session_id = session_id
+        self._client_version = client_version
 
     def invoke(self, messages):
         body = {
@@ -127,6 +146,8 @@ class _CloudStructuredLLM:
         headers = {"Authorization": f"Bearer {self._activation_key}"}
         if self._session_id is not None:
             headers["X-Session-Id"] = self._session_id
+        if self._client_version is not None:
+            headers["X-Client-Version"] = self._client_version
         response = httpx.post(
             self._endpoint,
             headers=headers,
