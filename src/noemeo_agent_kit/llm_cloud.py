@@ -25,6 +25,19 @@ and its release, which the driver knows and this module doesn't. A
 server uses it to decide whether it still supports that client and
 may refuse one it doesn't with the `client_outdated` error.
 
+`on_notice` (optional) is called with a `Notice` whenever a response --
+a success or an error -- says that what this client calls is deprecated
+or will stop being served (`Deprecation`/`Sunset`, README). It's the
+driver's, so it can warn its user; an exception it raises is swallowed,
+so a bug there never fails the call. It runs on the calling thread
+after every such response, so concurrent calls invoke it concurrently
+and repeatedly: it must be thread-safe and should deduplicate. `parse_notice` reads the same
+headers off any response, for a driver's own calls to the same server.
+
+`CONTRACT_VERSION` is the contract this module speaks, `<major>.<minor>`:
+the major is the path's (`/v1`), the minor counts additive revisions.
+It's not this package's version, which also covers the other modules.
+
 `model` is forwarded only when set; leave it unset so the server's own
 default wins -- translating between model naming schemes (e.g. an
 OpenAI-native name vs. a provider-specific one) is the server's job,
@@ -32,12 +45,53 @@ not this module's. `reasoning_effort` is accepted for interface parity
 and not forwarded.
 """
 
+import email.utils
+import logging
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import httpx
 from langchain_core.messages import convert_to_openai_messages
 
 from noemeo_agent_kit.config import DEFAULT_LLM_TIMEOUT_SECONDS
+
+# README, "Cloud chat contract v1": 1.0 the original contract (with the
+# reserved client_outdated code), 1.1 the deprecation notice.
+CONTRACT_VERSION = "1.1"
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Notice:
+    """What a server said about the lifetime of what this client calls:
+    `deprecated` since when (None if it only announced a sunset),
+    `sunset` when it stops being served (None if not yet decided), and
+    `link`, where to read about it and get an update."""
+
+    deprecated: datetime | None
+    sunset: datetime | None
+    link: str | None
+
+
+def parse_notice(headers: Mapping[str, str]) -> Notice | None:
+    """A Notice from a response's `Deprecation` (RFC 9745, `@<unix
+    time>`), `Sunset` (RFC 8594, an HTTP date) and `Link` (`rel=
+    "sunset"` or `"deprecation"`) headers; None when it carries neither
+    of the first two in a readable form. Malformed values are ignored,
+    never raised: a notice is advice, not part of the answer. Header
+    names are matched in any case, from any mapping."""
+    try:
+        headers = httpx.Headers(headers)
+    except (TypeError, ValueError):  # UnicodeEncodeError: non-ASCII in a hand-built mapping
+        return None
+    deprecated = _deprecation(headers.get("deprecation"))
+    sunset = _http_date(headers.get("sunset"))
+    if deprecated is None and sunset is None:
+        return None
+    return Notice(deprecated=deprecated, sunset=sunset, link=_lifecycle_link(headers.get("link")))
 
 
 class CloudChatError(httpx.HTTPStatusError):
@@ -85,6 +139,7 @@ def build_structured_llm(
     timeout: float = DEFAULT_LLM_TIMEOUT_SECONDS,
     session_id: str | None = None,
     client_version: str | None = None,
+    on_notice: Callable[[Notice], None] | None = None,
 ):
     """Construct a runnable bound to `output_schema`, invoked the same
     way llm_openai.build_structured_llm's return value is
@@ -97,7 +152,8 @@ def build_structured_llm(
     required, since there's no local fallback for either once this
     transport is selected. `session_id` is sent as `X-Session-Id` and
     `client_version` as `X-Client-Version` when set (README, "Cloud chat
-    contract v1").
+    contract v1"). `on_notice` receives any deprecation notice a response
+    carries.
     """
     return _CloudStructuredLLM(
         output_schema,
@@ -108,6 +164,7 @@ def build_structured_llm(
         timeout=timeout,
         session_id=session_id,
         client_version=client_version,
+        on_notice=on_notice,
     )
 
 
@@ -123,6 +180,7 @@ class _CloudStructuredLLM:
         timeout,
         session_id,
         client_version,
+        on_notice,
     ):
         self._output_schema = output_schema
         self._schema = output_schema.model_json_schema()
@@ -133,6 +191,7 @@ class _CloudStructuredLLM:
         self._timeout = timeout
         self._session_id = session_id
         self._client_version = client_version
+        self._on_notice = on_notice
 
     def invoke(self, messages):
         body = {
@@ -154,6 +213,7 @@ class _CloudStructuredLLM:
             json=body,
             timeout=self._timeout,
         )
+        self._report_notice(response)
         if response.is_error:
             raise CloudChatError(response)
         payload = response.json()
@@ -175,6 +235,54 @@ class _CloudStructuredLLM:
         ) as exc:  # pydantic.ValidationError, matching with_structured_output's own contract
             return {"raw": raw, "parsed": None, "parsing_error": exc}
         return {"raw": raw, "parsed": parsed, "parsing_error": None}
+
+    def _report_notice(self, response: httpx.Response) -> None:
+        if self._on_notice is None:
+            return
+        try:
+            notice = parse_notice(response.headers)
+            if notice is not None:
+                self._on_notice(notice)
+        except Exception:  # noqa: BLE001 -- the caller's bug mustn't fail a paid call
+            logger.exception("on_notice failed")
+
+
+def _deprecation(value: str | None) -> datetime | None:
+    # isascii(): isdigit() alone also accepts digits such as "٣".
+    if not value or not value.startswith("@") or not (value[1:].isascii() and value[1:].isdigit()):
+        return None
+    try:
+        return datetime.fromtimestamp(int(value[1:]), UTC)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _http_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _lifecycle_link(value: str | None) -> str | None:
+    """The first `Link` target whose rel is "sunset" or "deprecation"."""
+    for part in (value or "").split(","):
+        target, _, params = part.partition(";")
+        target = target.strip()
+        if not (target.startswith("<") and target.endswith(">")):
+            continue
+        rels = {
+            rel
+            for param in params.split(";")
+            if param.strip().lower().startswith("rel=")
+            for rel in param.split("=", 1)[1].strip().strip('"').lower().split()
+        }
+        if rels & {"sunset", "deprecation"}:
+            return target[1:-1]
+    return None
 
 
 def _usage_metadata(usage: dict | None) -> dict | None:
