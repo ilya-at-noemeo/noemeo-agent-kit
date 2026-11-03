@@ -55,10 +55,22 @@ product's own infrastructure implements it server-side and decides
 which provider, model, guardrails and quotas sit behind it. Nothing
 here knows which product or endpoint it's talking to.
 
-**Versioning:** the version is part of the endpoint path the driver
-supplies (e.g. `https://<host>/v1/chat`); the request carries no
-version field. A breaking change means a new path (`/v2/chat`) served
-alongside `/v1` until clients move, never a changed `/v1`.
+**Versioning:** the contract has its own version, `<major>.<minor>`,
+exported as `llm_cloud.CONTRACT_VERSION` -- currently **1.1**. It's not
+this package's version, which also covers the other modules and moves
+on its own. The major is part of the endpoint path the driver supplies
+(e.g. `https://<host>/v1/chat`); the request carries no version field.
+A breaking change means a new major and a new path (`/v2/chat`) served
+alongside `/v1` until clients move, never a changed `/v1`. A minor is
+an addition both sides can ignore (an optional header, a reserved code,
+a response field), so a server implementing 1.3 serves a 1.1 client;
+a 1.3 client needs a server on at least 1.3. A server documents which
+version it implements; checking the two against each other before a
+client ships is the product's job.
+
+- 1.0: the request and response below, `X-Session-Id`,
+  `X-Client-Version` and the reserved `client_outdated` code.
+- 1.1: deprecation notices (`Deprecation`, `Sunset`, `Link`).
 
 Request: `POST <endpoint>` with `Authorization: Bearer <activation key>`,
 optionally `X-Session-Id: <UUID>` and `X-Client-Version:
@@ -110,6 +122,29 @@ reason, never because of request content, and `426` carries no other
 code. `426` is used without the
 `Upgrade` header HTTP defines for it: this isn't a protocol upgrade,
 and clients branch on `error`, not on the status alone.
+
+**Deprecation notices (1.1).** When what a client calls is deprecated,
+or will stop being served to it, a server says so on every response --
+successes and errors alike, since a client may see no success for a
+while -- with:
+
+- `Deprecation: @<unix time>` (RFC 9745): deprecated since then;
+- `Sunset: <HTTP date>` (RFC 8594): served until then, never earlier
+  than `Deprecation`; equal to it when the end is immediate;
+- `Link: <url>; rel="deprecation"` and/or `rel="sunset"`: where to read
+  about it and get a current release. Clients read it simply: no comma
+  in the URL or in a quoted parameter.
+
+A server may send them for a whole path (it's being replaced) or for
+one client release (it falls out of the releases the server supports):
+a deliberate extension of the RFCs' per-resource meaning, since to the
+client both mean the same thing. If both apply, it sends the earlier
+sunset. After the sunset, the server answers `426 client_outdated`.
+`parse_notice(headers)` reads them into a `Notice`;
+`build_structured_llm`'s `on_notice` receives one from any response
+that carries them, on the calling thread: concurrent calls invoke it
+concurrently and repeatedly, so it must be thread-safe and should
+deduplicate. Telling the user is the calling application's job.
 
 Rules both sides rely on:
 
@@ -172,14 +207,16 @@ Poetry git dependency, no private package index needed:
 
 ```toml
 [tool.poetry.dependencies]
-noemeo-agent-kit = { git = "https://github.com/ilya-at-noemeo/noemeo-agent-kit.git", tag = "v0.2.0" }
+noemeo-agent-kit = { git = "https://github.com/ilya-at-noemeo/noemeo-agent-kit.git", tag = "v0.3.0" }
 ```
 
-Pin to a release tag (`tag = "v0.2.0"`) rather than `branch = "main"`,
+Pin to a release tag (`tag = "v0.3.0"`) rather than `branch = "main"`,
 so a product's lock names a version and moves only when the product
 chooses. `version` in `pyproject.toml` is bumped with every change to
 the public API or the contract text: minor for additions, major for
-breaking changes; each release is tagged `v<version>` on `main`.
+breaking changes; each release is tagged `v<version>` on `main`. The
+cloud chat contract's own version (`CONTRACT_VERSION`) is separate: a
+release can change one without the other.
 
 ## Development
 
